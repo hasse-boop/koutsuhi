@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#14161a">
+<title>交通費精算</title>
+<style>
+  :root{
+    --ground:#14161a;
+    --panel:#1c1f25;
+    --line:#2b3038;
+    --text:#e8e6e1;
+    --muted:#868c96;
+    --seal:#e2483d;
+    --sat:#6ea8e8;
+    --sun:#e08a86;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI","Noto Sans JP",sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--ground);color:var(--text);font-family:var(--sans);
+    font-size:16px;line-height:1.5;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    -webkit-text-size-adjust:100%;
+  }
+  .wrap{max-width:460px;margin:0 auto;padding:18px 16px 48px}
+
+  .eyebrow{font-size:11px;letter-spacing:.22em;color:var(--muted);text-transform:uppercase}
+
+  header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:20px}
+  header h1{font-size:17px;font-weight:600;letter-spacing:.08em;margin:0}
+
+  .month{display:flex;align-items:center;gap:2px}
+  .month b{font-family:var(--mono);font-size:15px;font-weight:600;min-width:104px;text-align:center;font-variant-numeric:tabular-nums}
+  .nav{background:none;border:0;color:var(--muted);font-size:20px;line-height:1;padding:8px 10px;cursor:pointer;font-family:var(--mono)}
+  .nav:active{color:var(--text)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+
+  .fare-row{display:flex;align-items:center;gap:10px}
+  .fare-row label{flex:1;font-size:14px;color:var(--muted)}
+  input[type=number]{
+    width:130px;background:#0e1013;border:1px solid var(--line);border-radius:9px;
+    color:var(--text);font-family:var(--mono);font-size:22px;font-weight:600;
+    text-align:right;padding:10px 12px;font-variant-numeric:tabular-nums;
+  }
+  input[type=number]:focus{outline:none;border-color:var(--seal)}
+  input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .yen{font-size:13px;color:var(--muted);width:14px}
+
+  .check{display:flex;align-items:center;gap:9px;margin-top:12px;font-size:13px;color:var(--muted);cursor:pointer}
+  .check input{width:19px;height:19px;accent-color:var(--seal);margin:0}
+
+  .cal-head,.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+  .cal-head{margin-bottom:6px}
+  .cal-head span{text-align:center;font-size:11px;letter-spacing:.1em;color:var(--muted)}
+  .cal-head span.s6{color:var(--sat)} .cal-head span.s0{color:var(--sun)}
+  .cell{
+    position:relative;aspect-ratio:1/1;border:0;background:none;padding:0;
+    font-family:var(--mono);font-size:15px;color:var(--text);
+    border-radius:50%;cursor:pointer;font-variant-numeric:tabular-nums;
+    transition:transform .08s ease;
+  }
+  .cell.s6{color:var(--sat)} .cell.s0{color:var(--sun)}
+  .cell.blank{visibility:hidden}
+  .cell.on{color:var(--seal);font-weight:700;box-shadow:inset 0 0 0 2px var(--seal);background:rgba(226,72,61,.12)}
+  .cell.today::after{content:"";position:absolute;left:50%;bottom:5px;transform:translateX(-50%);width:3px;height:3px;border-radius:50%;background:var(--muted)}
+  .cell.on:active{transform:scale(.9)}
+
+  .cal-tools{display:flex;gap:8px;margin-top:14px}
+  .btn{
+    flex:1;background:none;border:1px solid var(--line);border-radius:9px;
+    color:var(--muted);font-family:var(--sans);font-size:13px;padding:10px;cursor:pointer;
+  }
+  .btn:active{border-color:var(--seal);color:var(--text)}
+
+  .total-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 16px;margin-bottom:14px}
+  .total-top{display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
+  .total-num{font-family:var(--mono);font-size:40px;font-weight:700;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums}
+  .total-num small{font-size:15px;font-weight:500;color:var(--muted);margin-left:4px}
+  .breakdown{margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  .copy{
+    background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);
+    font-family:var(--sans);font-size:12px;padding:7px 12px;cursor:pointer;white-space:nowrap;
+  }
+  .copy:active,.copy.done{border-color:var(--seal);color:var(--seal)}
+
+  .list-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .fmt{display:flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:14px}
+  .fmt button{flex:1;background:none;border:0;border-right:1px solid var(--line);color:var(--muted);font-family:var(--mono);font-size:11px;padding:8px 3px;cursor:pointer;white-space:nowrap}
+  .fmt button:last-child{border-right:0}
+  .fmt button.on{background:var(--seal);color:#fff}
+  .days{font-family:var(--mono);font-size:14px;line-height:1.8;word-break:break-all;white-space:pre-line;min-height:1.8em;font-variant-numeric:tabular-nums}
+  .days.empty{color:var(--muted)}
+  .list-foot{display:flex;justify-content:flex-end;margin-top:12px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>交通費精算</h1>
+    <div class="month">
+      <button class="nav" id="prev" aria-label="前の月">‹</button>
+      <b id="ym">----年--月</b>
+      <button class="nav" id="next" aria-label="次の月">›</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="fare-row">
+      <label for="fare" id="fareLabel">片道運賃</label>
+      <input type="number" id="fare" inputmode="numeric" pattern="[0-9]*" min="0" step="10" value="0">
+      <span class="yen">円</span>
+    </div>
+    <label class="check"><input type="checkbox" id="manual">往復運賃を直接入力する</label>
+  </div>
+
+  <div class="card">
+    <div class="cal-head">
+      <span class="s0">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="s6">土</span>
+    </div>
+    <div class="cal" id="cal"></div>
+    <div class="cal-tools">
+      <button class="btn" id="weekdays">平日を全選択</button>
+      <button class="btn" id="clear">クリア</button>
+    </div>
+  </div>
+
+  <div class="total-card">
+    <div class="eyebrow">合計交通費</div>
+    <div class="total-top">
+      <div class="total-num" id="total">0<small>円</small></div>
+      <button class="copy" id="copyTotal">金額をコピー</button>
+    </div>
+    <div class="breakdown" id="breakdown">出社日を選んでください</div>
+  </div>
+
+  <div class="card">
+    <div class="list-head">
+      <div class="eyebrow">出社日 <span id="count" style="color:var(--text);letter-spacing:0">0日</span></div>
+    </div>
+    <div class="fmt" id="fmt">
+      <button data-f="3" class="on">申請文</button>
+      <button data-f="0">1、2</button>
+      <button data-f="1">7/1、7/2</button>
+      <button data-f="2">1日、2日</button>
+    </div>
+    <div class="days empty" id="days">未選択</div>
+    <div class="list-foot"><button class="copy" id="copyDays">テキストをコピー</button></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------- 保存領域(Claudeアプリ / Safari単体 / どちらでも動く) ---------- */
+  var KEY = "koutsuhi-data";
+  var hasWS = (typeof window.storage === "object" && window.storage && typeof window.storage.get === "function");
+  var memFallback = null;
+
+  function loadData(cb){
+    if (hasWS){
+      window.storage.get(KEY).then(function(r){
+        cb(r && r.value ? safeParse(r.value) : null);
+      }).catch(function(){ cb(null); });
+      return;
+    }
+    var v = null;
+    try { v = window.localStorage.getItem(KEY); } catch(e){ v = null; }
+    cb(v ? safeParse(v) : memFallback);
+  }
+  var saveTimer = null;
+  function saveData(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function(){
+      var json = JSON.stringify(state);
+      memFallback = safeParse(json);
+      if (hasWS){ try { window.storage.set(KEY, json).catch(function(){}); } catch(e){} return; }
+      try { window.localStorage.setItem(KEY, json); } catch(e){}
+    }, 250);
+  }
+  function safeParse(s){ try { return JSON.parse(s); } catch(e){ return null; } }
+
+  /* ---------- 状態 ---------- */
+  var now = new Date();
+  var state = {
+    fare: 0,
+    manual: false,
+    fmt: 3,
+    months: {}   // "2026-07": [1,5,8]
+  };
+  var view = { y: now.getFullYear(), m: now.getMonth() + 1 };
+
+  function key(y,m){ return y + "-" + (m<10?"0":"") + m; }
+  function selected(){
+    var k = key(view.y, view.m);
+    if (!Array.isArray(state.months[k])) state.months[k] = [];
+    return state.months[k];
+  }
+  function daysInMonth(y,m){ return new Date(y, m, 0).getDate(); }
+  function firstWeekday(y,m){ return new Date(y, m-1, 1).getDay(); }
+
+  /* ---------- 描画 ---------- */
+  var el = {};
+  ["prev","next","ym","fare","fareLabel","manual","cal","weekdays","clear",
+   "total","breakdown","copyTotal","count","fmt","days","copyDays"]
+   .forEach(function(id){ el[id] = document.getElementById(id); });
+
+  function renderCalendar(){
+    el.ym.textContent = view.y + "年" + view.m + "月";
+    var total = daysInMonth(view.y, view.m);
+    var lead = firstWeekday(view.y, view.m);
+    var sel = selected();
+    var html = "";
+    for (var i=0;i<lead;i++) html += '<button class="cell blank" disabled></button>';
+    for (var d=1; d<=total; d++){
+      var w = (lead + d - 1) % 7;
+      var cls = "cell s" + w;
+      if (sel.indexOf(d) !== -1) cls += " on";
+      if (view.y===now.getFullYear() && view.m===now.getMonth()+1 && d===now.getDate()) cls += " today";
+      html += '<button class="'+cls+'" data-d="'+d+'" aria-pressed="'+(sel.indexOf(d)!==-1)+'">'+d+'</button>';
+    }
+    el.cal.innerHTML = html;
+  }
+
+  function buildOutput(list, fmt){
+    if (!list.length) return "";
+    if (fmt === 3){
+      return view.m + "/" + list.join(",") + "\nをまとめて申請致します。";
+    }
+    return list.map(function(d){
+      if (fmt === 1) return view.m + "/" + d;
+      if (fmt === 2) return d + "日";
+      return String(d);
+    }).join("、");
+  }
+
+  function renderTotals(){
+    var sel = selected().slice().sort(function(a,b){ return a-b; });
+    var fare = Math.max(0, Math.floor(Number(el.fare.value) || 0));
+    var round = state.manual ? fare : fare * 2;
+    var sum = round * sel.length;
+
+    el.total.innerHTML = sum.toLocaleString("ja-JP") + "<small>円</small>";
+    el.count.textContent = sel.length + "日";
+
+    if (!sel.length){
+      el.breakdown.textContent = "出社日を選んでください";
+    } else if (state.manual){
+      el.breakdown.textContent = "往復 " + round.toLocaleString("ja-JP") + "円 × " + sel.length + "日";
+    } else {
+      el.breakdown.textContent = "片道 " + fare.toLocaleString("ja-JP") + "円 × 2 × " + sel.length + "日";
+    }
+
+    var txt = buildOutput(sel, state.fmt);
+    el.days.textContent = txt || "未選択";
+    el.days.className = txt ? "days" : "days empty";
+  }
+
+  function renderAll(){ renderCalendar(); renderTotals(); }
+
+  /* ---------- 操作 ---------- */
+  el.cal.addEventListener("click", function(e){
+    var btn = e.target.closest("button.cell");
+    if (!btn || btn.disabled) return;
+    var d = Number(btn.dataset.d);
+    var sel = selected();
+    var i = sel.indexOf(d);
+    if (i === -1) sel.push(d); else sel.splice(i, 1);
+    sel.sort(function(a,b){ return a-b; });
+    btn.classList.toggle("on");
+    btn.setAttribute("aria-pressed", sel.indexOf(d) !== -1);
+    renderTotals(); saveData();
+  });
+
+  el.prev.addEventListener("click", function(){
+    view.m--; if (view.m < 1){ view.m = 12; view.y--; } renderAll();
+  });
+  el.next.addEventListener("click", function(){
+    view.m++; if (view.m > 12){ view.m = 1; view.y++; } renderAll();
+  });
+
+  el.weekdays.addEventListener("click", function(){
+    var total = daysInMonth(view.y, view.m), sel = [];
+    for (var d=1; d<=total; d++){
+      var w = new Date(view.y, view.m-1, d).getDay();
+      if (w !== 0 && w !== 6) sel.push(d);
+    }
+    state.months[key(view.y, view.m)] = sel;
+    renderAll(); saveData();
+  });
+
+  el.clear.addEventListener("click", function(){
+    state.months[key(view.y, view.m)] = [];
+    renderAll(); saveData();
+  });
+
+  el.fare.addEventListener("input", function(){
+    state.fare = Math.max(0, Math.floor(Number(el.fare.value) || 0));
+    renderTotals(); saveData();
+  });
+
+  el.manual.addEventListener("change", function(){
+    state.manual = el.manual.checked;
+    el.fareLabel.textContent = state.manual ? "往復運賃" : "片道運賃";
+    renderTotals(); saveData();
+  });
+
+  el.fmt.addEventListener("click", function(e){
+    var b = e.target.closest("button[data-f]");
+    if (!b) return;
+    state.fmt = Number(b.dataset.f);
+    Array.prototype.forEach.call(el.fmt.children, function(c){
+      c.classList.toggle("on", c === b);
+    });
+    renderTotals(); saveData();
+  });
+
+  /* ---------- コピー(iOS Safari のフォールバック込み) ---------- */
+  function copyText(text, btn, label){
+    if (!text) return;
+    function done(){
+      var old = btn.textContent;
+      btn.textContent = "コピーしました";
+      btn.classList.add("done");
+      setTimeout(function(){ btn.textContent = label || old; btn.classList.remove("done"); }, 1200);
+    }
+    if (navigator.clipboard && window.isSecureContext){
+      navigator.clipboard.writeText(text).then(done).catch(function(){ legacy(text, done); });
+    } else {
+      legacy(text, done);
+    }
+  }
+  function legacy(text, done){
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+    document.body.appendChild(ta);
+    ta.select(); ta.setSelectionRange(0, text.length);
+    try { document.execCommand("copy"); done(); } catch(e){}
+    document.body.removeChild(ta);
+  }
+
+  el.copyTotal.addEventListener("click", function(){
+    var sel = selected();
+    var fare = Math.max(0, Math.floor(Number(el.fare.value) || 0));
+    var round = state.manual ? fare : fare * 2;
+    copyText(String(round * sel.length), el.copyTotal, "金額をコピー");
+  });
+  el.copyDays.addEventListener("click", function(){
+    var sel = selected().slice().sort(function(a,b){ return a-b; });
+    copyText(buildOutput(sel, state.fmt), el.copyDays, "テキストをコピー");
+  });
+
+  /* ---------- 起動 ---------- */
+  loadData(function(saved){
+    if (saved && typeof saved === "object"){
+      state.fare   = Number(saved.fare) || 0;
+      state.manual = !!saved.manual;
+      state.fmt    = [0,1,2,3].indexOf(Number(saved.fmt)) !== -1 ? Number(saved.fmt) : 3;
+      state.months = (saved.months && typeof saved.months === "object") ? saved.months : {};
+    }
+    el.fare.value = state.fare || "";
+    el.manual.checked = state.manual;
+    el.fareLabel.textContent = state.manual ? "往復運賃" : "片道運賃";
+    Array.prototype.forEach.call(el.fmt.children, function(c){
+      c.classList.toggle("on", Number(c.dataset.f) === state.fmt);
+    });
+    renderAll();
+  });
+})();
+</script>
+</body>
+</html>
