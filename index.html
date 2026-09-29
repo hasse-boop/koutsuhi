@@ -119,6 +119,14 @@
   .ph-del{position:absolute;right:3px;top:3px;width:26px;height:26px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:15px;line-height:26px;padding:0;cursor:pointer}
   .ph-status{margin-top:12px;font-family:var(--mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
   .ph-status.err{color:var(--seal)}
+  .ph-name{display:flex;align-items:center;gap:6px;margin-top:14px}
+  .ph-name label{flex:none;font-size:12px;color:var(--muted);margin-right:2px}
+  .ph-name input{
+    flex:1;min-width:0;background:#0e1013;border:1px solid var(--line);border-radius:9px;
+    color:var(--text);font-family:var(--sans);font-size:16px;padding:9px 10px;
+  }
+  .ph-name input:focus{outline:none;border-color:var(--seal)}
+  .ph-suffix{flex:none;font-family:var(--mono);font-size:13px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
   .ph-primary{
     flex:1;background:var(--seal);border:1px solid var(--seal);color:#fff;border-radius:9px;
     font-family:var(--sans);font-size:14px;font-weight:600;padding:12px;cursor:pointer;
@@ -193,6 +201,11 @@
     <input type="file" id="phInput" class="ph-file" accept="image/*" multiple>
     <div class="ph-grid" id="phGrid"></div>
     <div class="ph-status" id="phStatus">写真を選んでください</div>
+    <div class="ph-name">
+      <label for="phName">PDF名</label>
+      <input type="text" id="phName" placeholder="交通費" maxlength="60" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done">
+      <span class="ph-suffix" id="phSuffix">_yyyymm.pdf</span>
+    </div>
     <div class="ph-actions">
       <button class="ph-primary" id="phMake" disabled>PDFを作成</button>
     </div>
@@ -535,7 +548,10 @@
   /* ---------- 画面 ---------- */
   function $(id){ return document.getElementById(id); }
   var input = $("phInput"), grid = $("phGrid"), count = $("phCount"), status = $("phStatus"),
-      make = $("phMake"), clearBtn = $("phClear"), dlRow = $("phDlRow"), dl = $("phDl");
+      make = $("phMake"), clearBtn = $("phClear"), dlRow = $("phDlRow"), dl = $("phDl"),
+      nameInput = $("phName"), suffix = $("phSuffix");
+
+  var NAME_KEY = "koutsuhi-pdfname", DEFAULT_NAME = "交通費";
 
   var items = [];      // { file, url }
   var built = null;    // 完成したPDF(File)
@@ -553,7 +569,27 @@
     var d = new Date();
     var y = m ? Number(m[1]) : d.getFullYear();
     var mo = m ? Number(m[2]) : d.getMonth() + 1;
-    return y + "-" + (mo < 10 ? "0" : "") + mo;
+    return y + (mo < 10 ? "0" : "") + mo;          // yyyymm
+  }
+
+  /* ---------- PDF名(xxx_yyyymm.pdf) ---------- */
+  function cleanName(s){ return String(s || "").replace(/[\\\/:*?"<>|\x00-\x1f]/g, "").trim(); }
+  function pdfFileName(){ return (cleanName(nameInput.value) || DEFAULT_NAME) + "_" + monthTag() + ".pdf"; }
+  function loadName(){ try { return window.localStorage.getItem(NAME_KEY); } catch(e){ return null; } }
+  function saveName(v){ try { window.localStorage.setItem(NAME_KEY, v); } catch(e){} }
+
+  function doneText(){
+    return "完成: " + built.name + " · " + items.length + "ページ · " + fmtSize(built.size);
+  }
+
+  /* 名前や月が変わったら表示を更新。作成済みPDFは作り直さず名前だけ付け替える */
+  function refreshName(){
+    suffix.textContent = "_" + monthTag() + ".pdf";
+    if (built && built.name !== pdfFileName()){
+      built = new File([built], pdfFileName(), { type: "application/pdf" });
+      prepareDownload(built);
+    }
+    if (built && !busy) setStatus(doneText());
   }
 
   function invalidate(){
@@ -592,7 +628,7 @@
     make.textContent = built ? "PDFを共有・保存" : "PDFを作成";
 
     if (busy) return;
-    if (built)             setStatus("完成: " + built.name + " · " + items.length + "ページ · " + fmtSize(built.size));
+    if (built)             setStatus(doneText());
     else if (items.length) setStatus(items.length + "枚 → " + items.length + "ページのPDFになります");
     else                   setStatus("写真を選んでください");
   }
@@ -656,8 +692,7 @@
         try { pages.push(await toJpeg(items[i].url)); }
         catch(e){ throw new Error((i + 1) + "枚目の写真を読み込めませんでした"); }
       }
-      var fileName = "交通費_" + monthTag() + ".pdf";
-      built = new File([buildPdf(pages)], fileName, { type: "application/pdf" });
+      built = new File([buildPdf(pages)], pdfFileName(), { type: "application/pdf" });
       pages = null;
       prepareDownload(built);
     } catch(err){
@@ -669,6 +704,18 @@
     busy = false; render();
   });
 
+  nameInput.addEventListener("input", function(){ saveName(nameInput.value); refreshName(); });
+  nameInput.addEventListener("keydown", function(e){ if (e.key === "Enter") nameInput.blur(); });
+
+  // カレンダーの月送りに追従(交通費側のコードには手を入れずに表示中の月を監視)
+  var ymEl = $("ym");
+  if (ymEl && typeof MutationObserver === "function"){
+    new MutationObserver(refreshName).observe(ymEl, { childList: true, characterData: true, subtree: true });
+  }
+
+  var savedName = loadName();
+  nameInput.value = (savedName === null) ? DEFAULT_NAME : savedName;
+  refreshName();
   render();
 })();
 </script>
