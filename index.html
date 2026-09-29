@@ -100,7 +100,7 @@
   .days.empty{color:var(--muted)}
   .list-foot{display:flex;justify-content:flex-end;margin-top:12px}
 
-  /* ---------- 写真ZIP ---------- */
+  /* ---------- 写真PDF ---------- */
   .ph-card [hidden]{display:none!important}
   .ph-file{display:none}
   .ph-actions{display:flex;gap:8px;margin-top:12px}
@@ -184,7 +184,7 @@
 
   <div class="card ph-card">
     <div class="list-head">
-      <div class="eyebrow">写真をZIPにまとめる <span id="phCount" style="color:var(--text);letter-spacing:0">0枚</span></div>
+      <div class="eyebrow">写真をPDFにまとめる <span id="phCount" style="color:var(--text);letter-spacing:0">0枚</span></div>
     </div>
     <div class="ph-actions">
       <label class="ph-add" for="phInput">写真を追加</label>
@@ -194,7 +194,7 @@
     <div class="ph-grid" id="phGrid"></div>
     <div class="ph-status" id="phStatus">写真を選んでください</div>
     <div class="ph-actions">
-      <button class="ph-primary" id="phMake" disabled>ZIPを作成</button>
+      <button class="ph-primary" id="phMake" disabled>PDFを作成</button>
     </div>
     <div class="ph-actions" id="phDlRow" hidden>
       <a class="ph-sub" id="phDl" href="#" download>共有できない場合はこちらからダウンロード</a>
@@ -427,26 +427,73 @@
 </script>
 
 <script>
-/* ============ 写真ZIP(交通費計算とは独立して動作) ============ */
+/* ============ 写真PDF(交通費計算とは独立して動作) ============ */
 (function(){
   "use strict";
 
-  /*ZIP-BEGIN*/
-  var CRC_TABLE = (function(){
-    var t = new Uint32Array(256);
-    for (var n = 0; n < 256; n++){
-      var c = n;
-      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-      t[n] = c >>> 0;
-    }
-    return t;
-  })();
+  /*PDF-BEGIN*/
+  var A4_W = 595.28, A4_H = 841.89, MARGIN = 18;   // pt(1pt = 1/72インチ)
 
-  function crc32(u8){
-    var c = 0xFFFFFFFF;
-    for (var i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
-    return (c ^ 0xFFFFFFFF) >>> 0;
+  function ascii(s){
+    var u = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 0xFF;
+    return u;
   }
+  function num(n){ return String(Math.round(n * 100) / 100); }
+  function pad10(n){ var s = String(n); while (s.length < 10) s = "0" + s; return s; }
+
+  /* 写真1枚=1ページのA4 PDFを作る。pages: [{ jpeg: Uint8Array, w: px, h: px }] */
+  function buildPdf(pages){
+    if (!pages.length) throw new Error("写真がありません");
+    var chunks = [], pos = 0, offsets = [];
+    function add(x){ var u = (typeof x === "string") ? ascii(x) : x; chunks.push(u); pos += u.length; }
+    function begin(n){ offsets[n] = pos; add(n + " 0 obj\n"); }
+    function end(){ add("\nendobj\n"); }
+
+    add("%PDF-1.4\n");
+    add(new Uint8Array([0x25, 0xE2, 0xE3, 0xCF, 0xD3, 0x0A]));   // バイナリを含むことを示す慣例の行
+
+    var kids = [];
+    for (var i = 0; i < pages.length; i++) kids.push((3 + i * 3) + " 0 R");
+
+    begin(1); add("<< /Type /Catalog /Pages 2 0 R >>"); end();
+    begin(2); add("<< /Type /Pages /Kids [" + kids.join(" ") + "] /Count " + pages.length + " >>"); end();
+
+    pages.forEach(function(p, i){
+      var pageNo = 3 + i * 3, contNo = pageNo + 1, imgNo = pageNo + 2;
+      var landscape = p.w > p.h;
+      var W = landscape ? A4_H : A4_W, H = landscape ? A4_W : A4_H;
+      var s = Math.min((W - MARGIN * 2) / p.w, (H - MARGIN * 2) / p.h);
+      var dw = p.w * s, dh = p.h * s, x = (W - dw) / 2, y = (H - dh) / 2;
+
+      begin(pageNo);
+      add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + num(W) + " " + num(H) + "]" +
+          " /Resources << /XObject << /Im0 " + imgNo + " 0 R >> >> /Contents " + contNo + " 0 R >>");
+      end();
+
+      var cs = "q\n" + num(dw) + " 0 0 " + num(dh) + " " + num(x) + " " + num(y) + " cm\n/Im0 Do\nQ";
+      begin(contNo); add("<< /Length " + cs.length + " >>\nstream\n" + cs + "\nendstream"); end();
+
+      begin(imgNo);
+      add("<< /Type /XObject /Subtype /Image /Width " + p.w + " /Height " + p.h +
+          " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " + p.jpeg.length + " >>\nstream\n");
+      add(p.jpeg);
+      add("\nendstream");
+      end();
+    });
+
+    var count = 2 + pages.length * 3;
+    var xref = pos;
+    add("xref\n0 " + (count + 1) + "\n0000000000 65535 f \n");
+    for (var n = 1; n <= count; n++) add(pad10(offsets[n]) + " 00000 n \n");
+    add("trailer\n<< /Size " + (count + 1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n");
+    return new Blob(chunks, { type: "application/pdf" });
+  }
+  /*PDF-END*/
+
+  if (typeof document === "undefined" || !document.getElementById("phInput")) return;
+
+  var MAX_EDGE = 2000, QUALITY = 0.85;
 
   function readBytes(blob){
     if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
@@ -458,95 +505,32 @@
     });
   }
 
-  function dosDateTime(d){
-    if (!(d instanceof Date) || isNaN(d) || d.getFullYear() < 1980) d = new Date(1980, 0, 1);
-    return {
-      time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1),
-      date: ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()
-    };
+  function loadImage(url){
+    return new Promise(function(resolve, reject){
+      var img = new Image();
+      img.onload = function(){ resolve(img); };
+      img.onerror = function(){ reject(new Error("load")); };
+      img.src = url;
+    });
   }
 
-  /* 無圧縮(STORE)のZIPを作る。写真は元々圧縮済みなので無圧縮で十分速く、サイズもほぼ変わらない */
-  async function buildZip(entries, onProgress){
-    var enc = new TextEncoder();
-    var parts = [], central = [], offset = 0, cdSize = 0;
-    if (entries.length > 65535) throw new Error("枚数が多すぎます(65535枚まで)");
-
-    for (var i = 0; i < entries.length; i++){
-      var e = entries[i];
-      var bytes = new Uint8Array(await readBytes(e.blob));
-      var crc = crc32(bytes), size = bytes.length;
-      bytes = null;
-      var name = enc.encode(e.name);
-      var dt = dosDateTime(e.date);
-
-      if (offset + 30 + name.length + size > 0xFFFFFFFF) throw new Error("合計4GBを超えるため作成できません");
-
-      var lh = new Uint8Array(30 + name.length), v = new DataView(lh.buffer);
-      v.setUint32(0, 0x04034b50, true);
-      v.setUint16(4, 20, true);
-      v.setUint16(6, 0x0800, true);      // ファイル名はUTF-8
-      v.setUint16(8, 0, true);           // STORE
-      v.setUint16(10, dt.time, true);
-      v.setUint16(12, dt.date, true);
-      v.setUint32(14, crc, true);
-      v.setUint32(18, size, true);
-      v.setUint32(22, size, true);
-      v.setUint16(26, name.length, true);
-      v.setUint16(28, 0, true);
-      lh.set(name, 30);
-
-      var ch = new Uint8Array(46 + name.length), w = new DataView(ch.buffer);
-      w.setUint32(0, 0x02014b50, true);
-      w.setUint16(4, 20, true);
-      w.setUint16(6, 20, true);
-      w.setUint16(8, 0x0800, true);
-      w.setUint16(10, 0, true);
-      w.setUint16(12, dt.time, true);
-      w.setUint16(14, dt.date, true);
-      w.setUint32(16, crc, true);
-      w.setUint32(20, size, true);
-      w.setUint32(24, size, true);
-      w.setUint16(28, name.length, true);
-      w.setUint16(30, 0, true);
-      w.setUint16(32, 0, true);
-      w.setUint16(34, 0, true);
-      w.setUint16(36, 0, true);
-      w.setUint32(38, 0, true);
-      w.setUint32(42, offset, true);
-      ch.set(name, 46);
-
-      parts.push(lh, e.blob);            // 中身は元のFileを参照(メモリに全写真を抱えない)
-      central.push(ch);
-      offset += lh.length + size;
-      cdSize += ch.length;
-      if (onProgress) onProgress(i + 1, entries.length);
-    }
-
-    var eocd = new Uint8Array(22), x = new DataView(eocd.buffer);
-    x.setUint32(0, 0x06054b50, true);
-    x.setUint16(8, entries.length, true);
-    x.setUint16(10, entries.length, true);
-    x.setUint32(12, cdSize, true);
-    x.setUint32(16, offset, true);
-    return new Blob(parts.concat(central, [eocd]), { type: "application/zip" });
+  /* 写真を読み込み→(必要なら縮小)→白背景でJPEG化。向き(EXIF)はブラウザが反映した状態で描かれる */
+  async function toJpeg(url){
+    var img = await loadImage(url);
+    var w0 = img.naturalWidth, h0 = img.naturalHeight;
+    if (!w0 || !h0) throw new Error("load");
+    var s = Math.min(1, MAX_EDGE / Math.max(w0, h0));
+    var w = Math.max(1, Math.round(w0 * s)), h = Math.max(1, Math.round(h0 * s));
+    var c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    var ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    var blob = await new Promise(function(r){ c.toBlob(r, "image/jpeg", QUALITY); });
+    c.width = c.height = 0;                 // iPhoneのメモリをすぐ解放
+    if (!blob) throw new Error("encode");
+    return { jpeg: new Uint8Array(await readBytes(blob)), w: w, h: h };
   }
-
-  var EXT = { "image/jpeg":".jpg", "image/png":".png", "image/heic":".heic", "image/heif":".heif",
-              "image/gif":".gif", "image/webp":".webp" };
-
-  function entryName(file, index, total){
-    var width = Math.max(2, String(total).length);
-    var no = String(index + 1);
-    while (no.length < width) no = "0" + no;
-    var base = String(file.name || "").replace(/[\\\/:*?"<>|\x00-\x1f]/g, "_").trim();
-    if (!base) base = "photo";
-    if (!/\.[A-Za-z0-9]{2,5}$/.test(base)) base += (EXT[file.type] || ".jpg");
-    return no + "_" + base;
-  }
-  /*ZIP-END*/
-
-  if (typeof document === "undefined" || !document.getElementById("phInput")) return;
 
   /* ---------- 画面 ---------- */
   function $(id){ return document.getElementById(id); }
@@ -554,7 +538,7 @@
       make = $("phMake"), clearBtn = $("phClear"), dlRow = $("phDlRow"), dl = $("phDl");
 
   var items = [];      // { file, url }
-  var built = null;    // 完成したZIP(File)
+  var built = null;    // 完成したPDF(File)
   var dlUrl = null;
   var busy = false;
 
@@ -586,9 +570,7 @@
 
   function render(){
     grid.innerHTML = "";
-    var total = 0;
     items.forEach(function(it, i){
-      total += it.file.size;
       var box = document.createElement("div");
       box.className = "ph-item";
       var img = document.createElement("img");
@@ -607,12 +589,12 @@
     clearBtn.disabled = busy || !items.length;
     make.disabled = busy || !items.length;
     input.disabled = busy;
-    make.textContent = built ? "ZIPを共有・保存" : "ZIPを作成";
+    make.textContent = built ? "PDFを共有・保存" : "PDFを作成";
 
     if (busy) return;
-    if (built)            setStatus("完成: " + built.name + " · " + fmtSize(built.size));
-    else if (items.length) setStatus(items.length + "枚 · 合計 " + fmtSize(total));
-    else                  setStatus("写真を選んでください");
+    if (built)             setStatus("完成: " + built.name + " · " + items.length + "ページ · " + fmtSize(built.size));
+    else if (items.length) setStatus(items.length + "枚 → " + items.length + "ページのPDFになります");
+    else                   setStatus("写真を選んでください");
   }
 
   input.addEventListener("change", function(){
@@ -663,23 +645,25 @@
   make.addEventListener("click", async function(){
     if (busy || !items.length) return;
 
-    // 2回目のタップ: 作成済みZIPを共有(iOSはタップ直後でないと共有シートを開けないため2段階)
+    // 2回目のタップ: 作成済みPDFを共有(iOSはタップ直後でないと共有シートを開けないため2段階)
     if (built){ shareOrDownload(built); return; }
 
     busy = true; render();
     try {
-      var entries = items.map(function(it, i){
-        return { name: entryName(it.file, i, items.length), blob: it.file,
-                 date: new Date(it.file.lastModified || Date.now()) };
-      });
-      var blob = await buildZip(entries, function(done, n){ setStatus("作成中… " + done + " / " + n); });
-      var fileName = "交通費_" + monthTag() + ".zip";
-      built = new File([blob], fileName, { type: "application/zip" });
+      var pages = [];
+      for (var i = 0; i < items.length; i++){
+        setStatus("作成中… " + (i + 1) + " / " + items.length);
+        try { pages.push(await toJpeg(items[i].url)); }
+        catch(e){ throw new Error((i + 1) + "枚目の写真を読み込めませんでした"); }
+      }
+      var fileName = "交通費_" + monthTag() + ".pdf";
+      built = new File([buildPdf(pages)], fileName, { type: "application/pdf" });
+      pages = null;
       prepareDownload(built);
     } catch(err){
       built = null;
       busy = false; render();
-      setStatus("ZIPを作成できませんでした: " + ((err && err.message) || err), true);
+      setStatus("PDFを作成できませんでした: " + ((err && err.message) || err), true);
       return;
     }
     busy = false; render();
