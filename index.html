@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="交通費">
 <meta name="theme-color" content="#14161a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>交通費精算</title>
 <style>
   :root{
@@ -66,12 +70,14 @@
     border-radius:50%;cursor:pointer;font-variant-numeric:tabular-nums;
     transition:transform .08s ease;
   }
-  .cell.s6{color:var(--sat)} .cell.s0{color:var(--sun)}
+  .cell.s6{color:var(--sat)} .cell.s0,.cell.hol{color:var(--sun)}
   .cell.blank{visibility:hidden}
   .cell.on{color:var(--seal);font-weight:700;box-shadow:inset 0 0 0 2px var(--seal);background:rgba(226,72,61,.12)}
   .cell.today::after{content:"";position:absolute;left:50%;bottom:5px;transform:translateX(-50%);width:3px;height:3px;border-radius:50%;background:var(--muted)}
   .cell.on:active{transform:scale(.9)}
 
+  .hol-list{margin-top:10px;font-size:12px;color:var(--sun);font-variant-numeric:tabular-nums}
+  .hol-list:empty{display:none}
   .cal-tools{display:flex;gap:8px;margin-top:14px}
   .btn{
     flex:1;background:none;border:1px solid var(--line);border-radius:9px;
@@ -161,8 +167,9 @@
       <span class="s0">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="s6">土</span>
     </div>
     <div class="cal" id="cal"></div>
+    <div class="hol-list" id="hol"></div>
     <div class="cal-tools">
-      <button class="btn" id="weekdays">平日を全選択</button>
+      <button class="btn" id="weekdays">平日を全選択（祝日除く）</button>
       <button class="btn" id="clear">クリア</button>
     </div>
   </div>
@@ -267,9 +274,53 @@
   function daysInMonth(y,m){ return new Date(y, m, 0).getDate(); }
   function firstWeekday(y,m){ return new Date(y, m-1, 1).getDay(); }
 
+  /* ---------- 祝日(内閣府の規定を計算で再現。春分・秋分は1980〜2099年の近似式) ---------- */
+  var holCache = {};
+  function holidays(y){
+    if (holCache[y]) return holCache[y];
+    var h = {};   // "7-21": "海の日"
+    function set(m,d,name){ h[m + "-" + d] = name; }
+    function nthMon(m,n){ return 1 + ((8 - new Date(y, m-1, 1).getDay()) % 7) + (n-1) * 7; }
+    function k(dt){ return (dt.getMonth()+1) + "-" + dt.getDate(); }
+    function at(s, plus){ var p = s.split("-"); return new Date(y, p[0]-1, Number(p[1]) + plus); }
+    var t = y - 1980, q = Math.floor(t / 4);
+
+    set(1, 1, "元日");
+    set(1, nthMon(1,2), "成人の日");
+    set(2, 11, "建国記念の日");
+    if (y >= 2020) set(2, 23, "天皇誕生日");
+    set(3, Math.floor(20.8431 + 0.242194 * t) - q, "春分の日");
+    set(4, 29, "昭和の日");
+    set(5, 3, "憲法記念日");
+    set(5, 4, "みどりの日");
+    set(5, 5, "こどもの日");
+    if (y === 2020){ set(7, 23, "海の日"); set(7, 24, "スポーツの日"); set(8, 10, "山の日"); }
+    else if (y === 2021){ set(7, 22, "海の日"); set(7, 23, "スポーツの日"); set(8, 8, "山の日"); }
+    else { set(7, nthMon(7,3), "海の日"); set(8, 11, "山の日"); set(10, nthMon(10,2), "スポーツの日"); }
+    set(9, nthMon(9,3), "敬老の日");
+    set(9, Math.floor(23.2488 + 0.242194 * t) - q, "秋分の日");
+    set(11, 3, "文化の日");
+    set(11, 23, "勤労感謝の日");
+
+    // 国民の休日: 祝日に挟まれた平日
+    Object.keys(h).forEach(function(s){
+      var b = at(s, 1), c = at(s, 2);
+      if (c.getFullYear() === y && h[k(c)] && !h[k(b)] && b.getDay() !== 0) h[k(b)] = "国民の休日";
+    });
+    // 振替休日: 日曜の祝日の後の最初の平日
+    Object.keys(h).forEach(function(s){
+      if (at(s, 0).getDay() !== 0) return;
+      var d = at(s, 1);
+      while (h[k(d)]) d.setDate(d.getDate() + 1);
+      if (d.getFullYear() === y) h[k(d)] = "振替休日";
+    });
+    return (holCache[y] = h);
+  }
+  function holidayName(y,m,d){ return holidays(y)[m + "-" + d] || ""; }
+
   /* ---------- 描画 ---------- */
   var el = {};
-  ["prev","next","ym","fare","fareLabel","manual","cal","weekdays","clear",
+  ["prev","next","ym","fare","fareLabel","manual","cal","hol","weekdays","clear",
    "total","breakdown","copyTotal","count","fmt","days","copyDays"]
    .forEach(function(id){ el[id] = document.getElementById(id); });
 
@@ -278,16 +329,20 @@
     var total = daysInMonth(view.y, view.m);
     var lead = firstWeekday(view.y, view.m);
     var sel = selected();
-    var html = "";
+    var html = "", hol = [];
     for (var i=0;i<lead;i++) html += '<button class="cell blank" disabled></button>';
     for (var d=1; d<=total; d++){
       var w = (lead + d - 1) % 7;
       var cls = "cell s" + w;
+      var name = holidayName(view.y, view.m, d);
+      if (name){ cls += " hol"; hol.push(view.m + "/" + d + " " + name); }
       if (sel.indexOf(d) !== -1) cls += " on";
       if (view.y===now.getFullYear() && view.m===now.getMonth()+1 && d===now.getDate()) cls += " today";
-      html += '<button class="'+cls+'" data-d="'+d+'" aria-pressed="'+(sel.indexOf(d)!==-1)+'">'+d+'</button>';
+      html += '<button class="'+cls+'" data-d="'+d+'" aria-pressed="'+(sel.indexOf(d)!==-1)+'"' +
+              (name ? ' title="'+name+'" aria-label="'+d+'日 '+name+'"' : '') + '>'+d+'</button>';
     }
     el.cal.innerHTML = html;
+    el.hol.textContent = hol.join("　");
   }
 
   function buildOutput(list, fmt){
@@ -351,7 +406,7 @@
     var total = daysInMonth(view.y, view.m), sel = [];
     for (var d=1; d<=total; d++){
       var w = new Date(view.y, view.m-1, d).getDay();
-      if (w !== 0 && w !== 6) sel.push(d);
+      if (w !== 0 && w !== 6 && !holidayName(view.y, view.m, d)) sel.push(d);
     }
     state.months[key(view.y, view.m)] = sel;
     renderAll(); saveData();
@@ -718,6 +773,15 @@
   refreshName();
   render();
 })();
+</script>
+
+<script>
+/* ============ ホーム画面アプリ(オフライン対応) ============ */
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")){
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("sw.js").catch(function(){});
+  });
+}
 </script>
 </body>
 </html>
